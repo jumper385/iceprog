@@ -23,12 +23,24 @@
 
 #define _GNU_SOURCE
 
+#ifdef _WIN32
+#include <windows.h>
+// Windows: try the most common libftdi header location first
+#ifdef HAVE_LIBFTDI1_FTDI_H
+#include <libftdi1/ftdi.h>
+#else
 #include <ftdi.h>
+#endif
+#define usleep(x) Sleep((x)/1000)
+#else
+#include <ftdi.h>
+#include <unistd.h>
+#endif
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 #include "mpsse.h"
 

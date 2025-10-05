@@ -15,18 +15,43 @@ if (WIN32 AND NOT USE_GTK)
         comctl32
     )
     
-    # Try to find and link libftdi
-    find_library(FTDI_LIBRARY ftdi1)
+    # Try to find and link libftdi - try different possible locations and names
+    find_path(FTDI_INCLUDE_DIR
+        NAMES ftdi.h libftdi1/ftdi.h
+        PATHS
+            ${CMAKE_PREFIX_PATH}/include
+            $ENV{PROGRAMFILES}/libftdi/include
+            $ENV{PROGRAMFILES\(X86\)}/libftdi/include
+            C:/vcpkg/installed/x64-windows/include
+            C:/vcpkg/installed/x86-windows/include
+    )
+    
+    find_library(FTDI_LIBRARY
+        NAMES ftdi1 ftdi libftdi1 libftdi
+        PATHS
+            ${CMAKE_PREFIX_PATH}/lib
+            $ENV{PROGRAMFILES}/libftdi/lib
+            $ENV{PROGRAMFILES\(X86\)}/libftdi/lib
+            C:/vcpkg/installed/x64-windows/lib
+            C:/vcpkg/installed/x86-windows/lib
+    )
+    
+    if(FTDI_INCLUDE_DIR)
+        target_include_directories(iceprog_gui PRIVATE ${FTDI_INCLUDE_DIR})
+        message(STATUS "Found libftdi headers at: ${FTDI_INCLUDE_DIR}")
+        # Check if we're using the libftdi1 subdirectory structure
+        if(EXISTS "${FTDI_INCLUDE_DIR}/libftdi1/ftdi.h")
+            target_compile_definitions(iceprog_gui PRIVATE HAVE_LIBFTDI1_FTDI_H)
+        endif()
+    else()
+        message(WARNING "libftdi headers not found. Please install libftdi1-dev or set CMAKE_PREFIX_PATH")
+    endif()
+    
     if(FTDI_LIBRARY)
         target_link_libraries(iceprog_gui PRIVATE ${FTDI_LIBRARY})
+        message(STATUS "Found libftdi library at: ${FTDI_LIBRARY}")
     else()
-        # Try alternative names for libftdi
-        find_library(FTDI_LIBRARY_ALT ftdi)
-        if(FTDI_LIBRARY_ALT)
-            target_link_libraries(iceprog_gui PRIVATE ${FTDI_LIBRARY_ALT})
-        else()
-            message(WARNING "libftdi not found. Make sure it's installed and in your PATH.")
-        endif()
+        message(WARNING "libftdi library not found. Please install libftdi1 or set CMAKE_PREFIX_PATH")
     endif()
     
 else()

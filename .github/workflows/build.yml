@@ -39,8 +39,15 @@ jobs:
           name: iceprog_gui-ubuntu
           path: build/iceprog_gui
 
-      # ---------- Windows (Native Win32, no external DLLs) ----------
+      # ---------- Windows (Native Win32, with libftdi1 via vcpkg) ----------
       # Use Visual Studio generator so we can pass --config Release
+      - name: Install vcpkg and dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg.exe install libftdi1:x64-windows
       - name: Configure (Windows / Win32)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -49,13 +56,28 @@ jobs:
           -G "Visual Studio 17 2022"
           -A x64
           -DUSE_GTK=OFF
+          -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
       - name: Build (Windows / Win32)
         if: runner.os == 'Windows'
         shell: pwsh
         run: cmake --build build --config Release
+      - name: Copy dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Copy libftdi1 DLLs to the output directory
+          $vcpkgRoot = "C:\vcpkg\installed\x64-windows"
+          if (Test-Path "$vcpkgRoot\bin\ftdi1.dll") {
+            Copy-Item "$vcpkgRoot\bin\ftdi1.dll" "build\Release\"
+          }
+          if (Test-Path "$vcpkgRoot\bin\libusb-1.0.dll") {
+            Copy-Item "$vcpkgRoot\bin\libusb-1.0.dll" "build\Release\"
+          }
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: iceprog_gui-windows
-          path: build/Release/iceprog_gui.exe
+          path: |
+            build/Release/iceprog_gui.exe
+            build/Release/*.dll

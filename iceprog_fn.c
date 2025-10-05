@@ -28,16 +28,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <getopt.h>
 #include <errno.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <io.h> /* _setmode() */
 #include <fcntl.h> /* _O_BINARY */
+#include <windows.h>
+#define usleep(x) Sleep((x)/1000)
+#else
+#include <unistd.h>
+#include <getopt.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #endif
 
 #include "iceprog_fn.h"
