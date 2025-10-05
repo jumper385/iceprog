@@ -13,6 +13,7 @@ if (WIN32 AND NOT USE_GTK)
         gdi32 
         comdlg32 
         comctl32
+        ws2_32
     )
     
     # Try to find and link libftdi - try different possible locations and names
