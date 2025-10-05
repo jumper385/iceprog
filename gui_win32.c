@@ -183,11 +183,18 @@ void OnTestConnection(void) {
             // Show a warning to the user first
             int result = MessageBoxA(hwnd_main, 
                 "About to test FTDI device connection.\n\n"
-                "WARNING: If no FTDI device is connected, the application may close.\n"
-                "This is a limitation of the current libftdi implementation.\n\n"
-                "Make sure an FTDI-based ice40 programmer is connected before proceeding.\n\n"
-                "Do you want to continue?", 
-                "FTDI Device Test Warning", MB_YESNO | MB_ICONWARNING);
+                "Looking for FTDI devices with IDs:\n"
+                "- 0x0403:0x6010 (FT2232H)\n"
+                "- 0x0403:0x6014 (FT232H)\n\n"
+                "Common devices: iCEstick, iCE40-HX1K-EVB\n\n"
+                "WARNING: If no compatible device is found,\n"
+                "the application will exit immediately.\n\n"
+                "Troubleshooting:\n"
+                "- Check Device Manager for FTDI devices\n"
+                "- Close other applications using the device\n"
+                "- Try running as Administrator\n\n"
+                "Continue with device test?", 
+                "FTDI Device Test", MB_YESNO | MB_ICONQUESTION);
                 
             if (result != IDYES) {
                 LogMessage("User cancelled FTDI test");
@@ -198,11 +205,18 @@ void OnTestConnection(void) {
             // Use default parameters: interface 0, no device string, normal clock speed
             LogMessage("User confirmed, calling mpsse_init(0, NULL, false)...");
             LogMessage("If the application exits here, it means no FTDI device was found.");
+            LogMessage("Expected device IDs: 0x0403:0x6010 or 0x0403:0x6014");
+            LogMessage("Make sure the device is not in use by another application.");
+            
+            // Flush the log immediately so we can see this even if the app exits
+            if (log_file) {
+                fflush(log_file);
+            }
             
             // Note: mpsse_init may call exit() if no device is found
             // This is a limitation of the current libftdi implementation
             mpsse_init(0, NULL, false);
-            LogMessage("mpsse_init completed successfully");
+            LogMessage("mpsse_init completed successfully - device found and initialized!");
             
             mpsse_initialized = true;
             LogMessage("MPSSE initialized successfully");
