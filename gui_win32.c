@@ -67,8 +67,8 @@ void CloseLogging(void);
 
 void InitLogging(void) {
     char log_path[MAX_PATH];
-    char *home = getenv("USERPROFILE");  // Windows home directory
-    if (home) {
+    const char *home = getenv("USERPROFILE");  // Windows home directory
+    if (home && strlen(home) > 0) {
         snprintf(log_path, sizeof(log_path), "%s\\iceprog_gui.log", home);
     } else {
         strcpy_s(log_path, sizeof(log_path), "iceprog_gui.log");
@@ -148,7 +148,7 @@ static void cleanup_mpsse() {
             mpsse_close();
             LogMessage("mpsse_close completed successfully");
         } __except(EXCEPTION_EXECUTE_HANDLER) {
-            LogMessage("Exception during mpsse_close: 0x%08X", GetExceptionCode());
+            LogMessage("Exception during mpsse_close");
         }
         mpsse_initialized = false;
     }
@@ -212,14 +212,14 @@ void OnTestConnection(void) {
         
         MessageBoxA(hwnd_main, "Flash test completed successfully!\nCheck iceprog_gui.log for details.", "Test Connection", MB_OK | MB_ICONINFORMATION);
         
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        DWORD exception_code = GetExceptionCode();
-        LogMessage("EXCEPTION CAUGHT in OnTestConnection! Code: 0x%08X", exception_code);
+    } __except(GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : 
+               GetExceptionCode() == EXCEPTION_INT_DIVIDE_BY_ZERO ? EXCEPTION_EXECUTE_HANDLER :
+               EXCEPTION_EXECUTE_HANDLER) {
+        LogMessage("EXCEPTION CAUGHT in OnTestConnection!");
         
         char error_msg[256];
         snprintf(error_msg, sizeof(error_msg), 
-            "An exception occurred during flash test!\nException code: 0x%08X\nCheck iceprog_gui.log for details.", 
-            exception_code);
+            "An exception occurred during flash test!\nCheck iceprog_gui.log for details.");
         MessageBoxA(hwnd_main, error_msg, "Error", MB_OK | MB_ICONERROR);
     }
     
