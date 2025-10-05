@@ -36,10 +36,12 @@
 #define ID_BTN_FLASH_CHIP       1003
 #define ID_LBL_FILE_PATH        1004
 #define ID_PROGRESS_BAR         1005
+#define ID_EDIT_DEVICE_STRING   1006
+#define ID_LBL_DEVICE_STRING    1007
 
 // Window dimensions
 #define WINDOW_WIDTH    500
-#define WINDOW_HEIGHT   300
+#define WINDOW_HEIGHT   380  // Increased for device string input
 #define BUTTON_WIDTH    200
 #define BUTTON_HEIGHT   30
 #define MARGIN          10
@@ -47,12 +49,14 @@
 // Global variables
 static bool mpsse_initialized = false;
 static char selected_file_path[MAX_PATH] = {0};
+static char device_string[256] = {0};  // Custom device string
 static HWND hwnd_main = NULL;
 static HWND hwnd_lbl_file_path = NULL;
 static HWND hwnd_progress_bar = NULL;
 static HWND hwnd_btn_test = NULL;
 static HWND hwnd_btn_select = NULL;
 static HWND hwnd_btn_flash = NULL;
+static HWND hwnd_edit_device = NULL;
 static FILE *log_file = NULL;
 
 // Function prototypes
@@ -183,16 +187,14 @@ void OnTestConnection(void) {
             // Show a warning to the user first
             int result = MessageBoxA(hwnd_main, 
                 "About to test FTDI device connection.\n\n"
-                "Looking for FTDI devices with IDs:\n"
-                "- 0x0403:0x6010 (FT2232H)\n"
-                "- 0x0403:0x6014 (FT232H)\n\n"
-                "Common devices: iCEstick, iCE40-HX1K-EVB\n\n"
-                "WARNING: If no compatible device is found,\n"
-                "the application will exit immediately.\n\n"
-                "Troubleshooting:\n"
-                "- Check Device Manager for FTDI devices\n"
-                "- Close other applications using the device\n"
-                "- Try running as Administrator\n\n"
+                "Default: Looking for 0x0403:0x6010 or 0x0403:0x6014\n"
+                "Custom: Use device string field above\n\n"
+                "Device string examples:\n"
+                "• i:0 = first device\n"
+                "• i:1 = second device  \n"
+                "• FT123456 = serial number\n"
+                "• 0x0403:0x6001 = specific VID:PID\n\n"
+                "WARNING: App will exit if device not found.\n\n"
                 "Continue with device test?", 
                 "FTDI Device Test", MB_YESNO | MB_ICONQUESTION);
                 
@@ -202,9 +204,20 @@ void OnTestConnection(void) {
                 return;
             }
             
-            // Use default parameters: interface 0, no device string, normal clock speed
-            LogMessage("User confirmed, calling mpsse_init(0, NULL, false)...");
-            LogMessage("If the application exits here, it means no FTDI device was found.");
+            LogMessage("User confirmed, calling mpsse_init...");
+            
+            // Get device string from the edit control
+            GetWindowTextA(hwnd_edit_device, device_string, sizeof(device_string));
+            
+            const char *dev_str = NULL;
+            if (strlen(device_string) > 0) {
+                dev_str = device_string;
+                LogMessage("Using custom device string: '%s'", dev_str);
+            } else {
+                LogMessage("Using default device detection (0x0403:0x6010 or 0x0403:0x6014)");
+            }
+            
+            LogMessage("If the application exits here, the device was not found.");
             LogMessage("Expected device IDs: 0x0403:0x6010 or 0x0403:0x6014");
             LogMessage("Make sure the device is not in use by another application.");
             
@@ -215,7 +228,7 @@ void OnTestConnection(void) {
             
             // Note: mpsse_init may call exit() if no device is found
             // This is a limitation of the current libftdi implementation
-            mpsse_init(0, NULL, false);
+            mpsse_init(0, dev_str, false);
             LogMessage("mpsse_init completed successfully - device found and initialized!");
             
             mpsse_initialized = true;
@@ -458,6 +471,22 @@ void CreateControls(HWND hwnd) {
     InitCommonControlsEx(&icc);
     
     int y_pos = MARGIN;
+    
+    // Device string label and edit box
+    CreateWindowA("STATIC", "Device String (optional):",
+        WS_VISIBLE | WS_CHILD,
+        MARGIN, y_pos, 150, 20,
+        hwnd, (HMENU)ID_LBL_DEVICE_STRING, GetModuleHandle(NULL), NULL);
+    y_pos += 25;
+    
+    hwnd_edit_device = CreateWindowA("EDIT", "",
+        WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+        MARGIN, y_pos, WINDOW_WIDTH - 2 * MARGIN, 25,
+        hwnd, (HMENU)ID_EDIT_DEVICE_STRING, GetModuleHandle(NULL), NULL);
+    
+    // Add placeholder text
+    SetWindowTextA(hwnd_edit_device, "i:0  (try: i:0, i:1, or serial number)");
+    y_pos += 35;
     
     // Test connection button
     hwnd_btn_test = CreateWindowA(
