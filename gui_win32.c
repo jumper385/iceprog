@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 // Force ANSI/ASCII string functions
 #ifdef UNICODE
@@ -50,6 +51,7 @@ static HWND hwnd_progress_bar = NULL;
 static HWND hwnd_btn_test = NULL;
 static HWND hwnd_btn_select = NULL;
 static HWND hwnd_btn_flash = NULL;
+static FILE *log_file = NULL;
 
 // Function prototypes
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -59,6 +61,68 @@ void OnSelectFile(HWND hwnd);
 void OnFlashChip(void);
 void UpdateProgress(int percent, const char *text);
 void CleanupMpsse(void);
+void InitLogging(void);
+void LogMessage(const char *format, ...);
+void CloseLogging(void);
+
+void InitLogging(void) {
+    char log_path[MAX_PATH];
+    char *home = getenv("USERPROFILE");  // Windows home directory
+    if (home) {
+        snprintf(log_path, sizeof(log_path), "%s\\iceprog_gui.log", home);
+    } else {
+        strcpy_s(log_path, sizeof(log_path), "iceprog_gui.log");
+    }
+    
+    log_file = fopen(log_path, "w");
+    if (log_file) {
+        LogMessage("=== IceProg GUI Log Started ===");
+        LogMessage("Log file: %s", log_path);
+    }
+    // Also create a console for debugging
+    AllocConsole();
+    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+    freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
+    printf("Debug console opened. Log file: %s\n", log_path);
+}
+
+void LogMessage(const char *format, ...) {
+    va_list args;
+    char buffer[1024];
+    SYSTEMTIME st;
+    
+    GetLocalTime(&st);
+    
+    // Format the message
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    // Write to log file with timestamp
+    if (log_file) {
+        fprintf(log_file, "[%04d-%02d-%02d %02d:%02d:%02d.%03d] %s\n",
+                st.wYear, st.wMonth, st.wDay,
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+                buffer);
+        fflush(log_file);
+    }
+    
+    // Also write to console and Visual Studio output
+    printf("[%02d:%02d:%02d] %s\n", st.wHour, st.wMinute, st.wSecond, buffer);
+    
+    // Write to debug output (visible in Visual Studio)
+    char debug_buffer[1100];
+    snprintf(debug_buffer, sizeof(debug_buffer), "[IceProg] %s\n", buffer);
+    OutputDebugStringA(debug_buffer);
+}
+
+void CloseLogging(void) {
+    if (log_file) {
+        LogMessage("=== IceProg GUI Log Ended ===");
+        fclose(log_file);
+        log_file = NULL;
+    }
+}
 
 static void update_progress(double fraction, const char *text) {
     if (hwnd_progress_bar) {
@@ -76,43 +140,90 @@ static void update_progress(double fraction, const char *text) {
 }
 
 static void cleanup_mpsse() {
+    LogMessage("=== Cleanup Started ===");
+    
     if (mpsse_initialized) {
-        printf("Cleaning up MPSSE interface...\n");
-        mpsse_close();
+        LogMessage("Cleaning up MPSSE interface...");
+        __try {
+            mpsse_close();
+            LogMessage("mpsse_close completed successfully");
+        } __except(EXCEPTION_EXECUTE_HANDLER) {
+            LogMessage("Exception during mpsse_close: 0x%08X", GetExceptionCode());
+        }
         mpsse_initialized = false;
     }
+    
     memset(selected_file_path, 0, sizeof(selected_file_path));
+    LogMessage("=== Cleanup Completed ===");
 }
 
 void OnTestConnection(void) {
-    printf("Testing SPI Flash connection...\n");
+    LogMessage("=== Test Connection Started ===");
     
-    // Initialize MPSSE if not already done
-    if (!mpsse_initialized) {
-        printf("Initializing MPSSE interface...\n");
+    __try {
+        LogMessage("Testing SPI Flash connection...");
         
-        // Use default parameters: interface 0, no device string, normal clock speed
-        mpsse_init(0, NULL, false);
-        mpsse_initialized = true;
+        // Initialize MPSSE if not already done
+        if (!mpsse_initialized) {
+            LogMessage("Initializing MPSSE interface...");
+            
+            // Use default parameters: interface 0, no device string, normal clock speed
+            LogMessage("Calling mpsse_init(0, NULL, false)...");
+            mpsse_init(0, NULL, false);
+            LogMessage("mpsse_init completed successfully");
+            
+            mpsse_initialized = true;
+            LogMessage("MPSSE initialized successfully");
+            
+            // Release reset and setup flash
+            LogMessage("Calling flash_release_reset()...");
+            flash_release_reset();
+            LogMessage("flash_release_reset completed");
+            
+            LogMessage("Sleeping for 100ms...");
+            usleep(100000);  // 100ms
+            LogMessage("Sleep completed");
+            
+            LogMessage("Flash reset released");
+        } else {
+            LogMessage("MPSSE already initialized, skipping initialization");
+        }
         
-        printf("MPSSE initialized successfully\n");
+        // Test the flash connection
+        LogMessage("Reading flash ID...");
         
-        // Release reset and setup flash
-        flash_release_reset();
-        usleep(100000);  // 100ms
+        LogMessage("Calling flash_reset()...");
+        flash_reset();
+        LogMessage("flash_reset completed");
         
-        printf("Flash reset released\n");
+        LogMessage("Calling flash_power_up()...");
+        flash_power_up();
+        LogMessage("flash_power_up completed");
+        
+        LogMessage("Calling flash_read_id()...");
+        flash_read_id();
+        LogMessage("flash_read_id completed");
+        
+        LogMessage("Calling flash_power_down()...");
+        flash_power_down();
+        LogMessage("flash_power_down completed");
+        
+        LogMessage("Flash test completed successfully");
+        
+        MessageBoxA(hwnd_main, "Flash test completed successfully!\nCheck iceprog_gui.log for details.", "Test Connection", MB_OK | MB_ICONINFORMATION);
+        
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        DWORD exception_code = GetExceptionCode();
+        LogMessage("EXCEPTION CAUGHT in OnTestConnection! Code: 0x%08X", exception_code);
+        
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg), 
+            "An exception occurred during flash test!\nException code: 0x%08X\nCheck iceprog_gui.log for details.", 
+            exception_code);
+        MessageBoxA(hwnd_main, error_msg, "Error", MB_OK | MB_ICONERROR);
     }
     
-    // Test the flash connection
-    printf("Reading flash ID...\n");
-    flash_reset();
-    flash_power_up();
-    flash_read_id();
-    flash_power_down();
-    printf("Flash test completed\n");
-    
-    MessageBoxA(hwnd_main, "Flash test completed successfully!", "Test Connection", MB_OK | MB_ICONINFORMATION);
+    LogMessage("=== Test Connection Ended ===");
 }
 
 void OnSelectFile(HWND hwnd) {
@@ -354,24 +465,31 @@ void CreateControls(HWND hwnd) {
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE:
+            LogMessage("WM_CREATE received, creating controls...");
             CreateControls(hwnd);
+            LogMessage("Controls created successfully");
             return 0;
             
         case WM_COMMAND:
+            LogMessage("WM_COMMAND received, command ID: %d", LOWORD(wParam));
             switch (LOWORD(wParam)) {
                 case ID_BTN_TEST_CONNECTION:
+                    LogMessage("Test connection button clicked");
                     OnTestConnection();
                     break;
                 case ID_BTN_SELECT_FILE:
+                    LogMessage("Select file button clicked");
                     OnSelectFile(hwnd);
                     break;
                 case ID_BTN_FLASH_CHIP:
+                    LogMessage("Flash chip button clicked");
                     OnFlashChip();
                     break;
             }
             return 0;
             
         case WM_DESTROY:
+            LogMessage("WM_DESTROY received, cleaning up...");
             cleanup_mpsse();
             PostQuitMessage(0);
             return 0;
@@ -381,6 +499,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Initialize logging first
+    InitLogging();
+    LogMessage("=== Application Starting ===");
+    LogMessage("Command line: %s", lpCmdLine ? lpCmdLine : "(empty)");
+    
     // Register the window class
     const char CLASS_NAME[] = "IceProgGUI";
     
@@ -392,9 +515,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     
-    RegisterClassA(&wc);
+    LogMessage("Registering window class...");
+    if (!RegisterClassA(&wc)) {
+        LogMessage("Failed to register window class! Error: %d", GetLastError());
+        CloseLogging();
+        return 1;
+    }
+    LogMessage("Window class registered successfully");
     
     // Create the window
+    LogMessage("Creating main window...");
     hwnd_main = CreateWindowExA(
         0,                              // Optional window styles
         CLASS_NAME,                     // Window class
@@ -409,18 +539,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     );
     
     if (hwnd_main == NULL) {
-        return 0;
+        LogMessage("Failed to create window! Error: %d", GetLastError());
+        CloseLogging();
+        return 1;
     }
+    LogMessage("Main window created successfully");
     
     ShowWindow(hwnd_main, nCmdShow);
     UpdateWindow(hwnd_main);
+    LogMessage("Window shown and updated");
     
     // Run the message loop
+    LogMessage("Entering message loop...");
     MSG msg = {};
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
     
+    LogMessage("Message loop ended");
+    LogMessage("=== Application Ending ===");
+    CloseLogging();
     return 0;
 }
