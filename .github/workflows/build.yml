@@ -1,0 +1,94 @@
+name: Build GUI (GTK + CMake)
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # ---------- Linux ----------
+      - name: Install deps (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev cmake ninja-build
+      - name: Configure (Ubuntu)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build (Ubuntu)
+        if: runner.os == 'Linux'
+        run: cmake --build build --config Release
+      - name: Upload artifact (Ubuntu)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iceprog_gui-ubuntu
+          path: build/iceprog_gui
+
+      # ---------- macOS (Apple Silicon) ----------
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install gtk+3 pkg-config cmake ninja
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        env:
+          PKG_CONFIG_PATH: /opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig
+          PATH: /opt/homebrew/bin:${{ env.PATH }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build build --config Release
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iceprog_gui-macos
+          path: build/iceprog_gui
+
+      # ---------- Windows (MSYS2 / MinGW64 / GTK3) ----------
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-gtk3
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+
+      - name: Configure (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_GTK=ON
+
+      - name: Build (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: cmake --build build --config Release
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iceprog_gui-windows
+          path: build/iceprog_gui.exe
