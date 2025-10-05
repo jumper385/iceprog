@@ -66,24 +66,33 @@ void LogMessage(const char *format, ...);
 void CloseLogging(void);
 
 void InitLogging(void) {
-    char log_path[MAX_PATH];
-    const char *home = getenv("USERPROFILE");  // Windows home directory
-    if (home && strlen(home) > 0) {
-        snprintf(log_path, sizeof(log_path), "%s\\iceprog_gui.log", home);
-    } else {
-        strcpy_s(log_path, sizeof(log_path), "iceprog_gui.log");
+    // Create log file immediately with basic error handling
+    log_file = fopen("iceprog_debug.log", "w");
+    if (!log_file) {
+        log_file = fopen("C:\\temp\\iceprog_debug.log", "w");
+    }
+    if (!log_file) {
+        // Try current directory as last resort
+        log_file = fopen(".\\iceprog_debug.log", "w");
     }
     
-    log_file = fopen(log_path, "w");
     if (log_file) {
-        LogMessage("=== IceProg GUI Log Started ===");
-        LogMessage("Log file: %s", log_path);
+        fprintf(log_file, "=== IceProg GUI Debug Log Started ===\n");
+        fflush(log_file);
     }
-    // Also create a console for debugging
-    AllocConsole();
-    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
-    freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
-    printf("Debug console opened. Log file: %s\n", log_path);
+    
+    // Try to create console - if this fails, we'll still have the log file
+    if (AllocConsole()) {
+        freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+        freopen_s((FILE**)stderr, "CONOUT$", "w", stderr);
+        printf("Debug console opened successfully\n");
+    }
+    
+    // Write to debug log immediately
+    if (log_file) {
+        fprintf(log_file, "InitLogging completed successfully\n");
+        fflush(log_file);
+    }
 }
 
 void LogMessage(const char *format, ...) {
@@ -499,6 +508,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Emergency logging - write directly to file before any complex initialization
+    FILE *emergency_log = fopen("emergency_debug.log", "w");
+    if (emergency_log) {
+        fprintf(emergency_log, "WinMain started successfully\n");
+        fprintf(emergency_log, "hInstance: %p\n", hInstance);
+        fprintf(emergency_log, "nCmdShow: %d\n", nCmdShow);
+        fflush(emergency_log);
+        fclose(emergency_log);
+    }
+    
     // Initialize logging first
     InitLogging();
     LogMessage("=== Application Starting ===");

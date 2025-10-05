@@ -73,6 +73,24 @@ jobs:
           if (Test-Path "$vcpkgRoot\bin\libusb-1.0.dll") {
             Copy-Item "$vcpkgRoot\bin\libusb-1.0.dll" "build\Release\"
           }
+      - name: Test run application (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          cd build\Release
+          # Try to run the application for 5 seconds to generate logs
+          Start-Process -FilePath ".\iceprog_gui.exe" -PassThru | ForEach-Object { 
+            Start-Sleep -Seconds 5
+            if (!$_.HasExited) { 
+              Stop-Process -Id $_.Id -Force 
+            }
+          }
+          # List any log files created
+          Get-ChildItem -Path . -Filter "*.log" | ForEach-Object { 
+            Write-Host "Found log file: $($_.Name)"
+            Get-Content $_.FullName
+          }
       - name: Upload artifact (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
@@ -81,3 +99,4 @@ jobs:
           path: |
             build/Release/iceprog_gui.exe
             build/Release/*.dll
+            build/Release/*.log
