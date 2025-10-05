@@ -1,3 +1,4 @@
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commdlg.h>
 #include <commctrl.h>
@@ -5,9 +6,26 @@
 #include <string.h>
 #include <stdbool.h>
 
+// Force ANSI/ASCII string functions
+#ifdef UNICODE
+#undef UNICODE
+#endif
+#ifdef _UNICODE
+#undef _UNICODE
+#endif
+
 // include iceprog library
 #include "iceprog_fn.h"
 #include "mpsse.h"
+
+// Link required libraries
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "comctl32.lib")
+
+// Windows compatibility - Sleep is in milliseconds, usleep was in microseconds
+#define usleep(x) Sleep((x)/1000)
 
 // Window controls IDs
 #define ID_BTN_TEST_CONNECTION  1001
@@ -81,7 +99,7 @@ void OnTestConnection(void) {
         
         // Release reset and setup flash
         flash_release_reset();
-        Sleep(100);  // Windows equivalent of usleep(100000)
+        usleep(100000);  // 100ms
         
         printf("Flash reset released\n");
     }
@@ -171,14 +189,14 @@ void OnFlashChip(void) {
         mpsse_init(0, NULL, false);
         mpsse_initialized = true;
         flash_release_reset();
-        Sleep(100);
+        usleep(100000);  // 100ms
     }
     
     // Reset and prepare flash
     update_progress(0.15, "Preparing flash...");
     printf("Preparing flash...\n");
     flash_chip_deselect();
-    Sleep(250);
+    usleep(250000);  // 250ms
     flash_reset();
     flash_power_up();
     flash_read_id();
@@ -260,7 +278,7 @@ void OnFlashChip(void) {
     update_progress(0.95, "Finalizing...");
     flash_power_down();
     flash_release_reset();
-    Sleep(250);
+    usleep(250000);  // 250ms
     
     fclose(f);
     
@@ -285,7 +303,7 @@ void CreateControls(HWND hwnd) {
     int y_pos = MARGIN;
     
     // Test connection button
-    hwnd_btn_test = CreateWindow(
+    hwnd_btn_test = CreateWindowA(
         "BUTTON", "Test Probe Connection",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
         (WINDOW_WIDTH - BUTTON_WIDTH) / 2, y_pos,
@@ -294,7 +312,7 @@ void CreateControls(HWND hwnd) {
     y_pos += BUTTON_HEIGHT + MARGIN;
     
     // Select file button
-    hwnd_btn_select = CreateWindow(
+    hwnd_btn_select = CreateWindowA(
         "BUTTON", "Select Bitstream File",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         (WINDOW_WIDTH - BUTTON_WIDTH) / 2, y_pos,
@@ -303,7 +321,7 @@ void CreateControls(HWND hwnd) {
     y_pos += BUTTON_HEIGHT + MARGIN;
     
     // File path label
-    hwnd_lbl_file_path = CreateWindow(
+    hwnd_lbl_file_path = CreateWindowA(
         "STATIC", "No file selected",
         WS_VISIBLE | WS_CHILD | SS_CENTER,
         MARGIN, y_pos,
@@ -312,8 +330,8 @@ void CreateControls(HWND hwnd) {
     y_pos += 25 + MARGIN;
     
     // Progress bar
-    hwnd_progress_bar = CreateWindow(
-        PROGRESS_CLASS, NULL,
+    hwnd_progress_bar = CreateWindowA(
+        PROGRESS_CLASSA, NULL,
         WS_VISIBLE | WS_CHILD | PBS_SMOOTH,
         MARGIN, y_pos,
         WINDOW_WIDTH - 2 * MARGIN, 25,
@@ -325,7 +343,7 @@ void CreateControls(HWND hwnd) {
     y_pos += 30 + MARGIN;
     
     // Flash chip button
-    hwnd_btn_flash = CreateWindow(
+    hwnd_btn_flash = CreateWindowA(
         "BUTTON", "Flash Chip",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
         (WINDOW_WIDTH - BUTTON_WIDTH) / 2, y_pos,
@@ -366,7 +384,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Register the window class
     const char CLASS_NAME[] = "IceProgGUI";
     
-    WNDCLASS wc = {};
+    WNDCLASSA wc = {};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
@@ -374,10 +392,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
     
-    RegisterClass(&wc);
+    RegisterClassA(&wc);
     
     // Create the window
-    hwnd_main = CreateWindowEx(
+    hwnd_main = CreateWindowExA(
         0,                              // Optional window styles
         CLASS_NAME,                     // Window class
         "IceProg GUI - Windows",        // Window text
