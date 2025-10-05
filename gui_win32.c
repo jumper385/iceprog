@@ -19,6 +19,17 @@
 #include "iceprog_fn.h"
 #include "mpsse.h"
 
+#ifdef _WIN32
+// Windows: try the most common libftdi header location first
+#ifdef HAVE_LIBFTDI1_FTDI_H
+#include <libftdi1/ftdi.h>
+#else
+#include <ftdi.h>
+#endif
+#else
+#include <ftdi.h>
+#endif
+
 // Link required libraries
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -175,14 +186,56 @@ void OnTestConnection(void) {
         // Initialize MPSSE if not already done
         if (!mpsse_initialized) {
             LogMessage("Initializing MPSSE interface...");
+            LogMessage("Checking for FTDI devices...");
+            
+            // First, let's try to detect if any FTDI devices are available
+            // without calling the potentially crashing mpsse_init
+            struct ftdi_context test_ftdi;
+            ftdi_init(&test_ftdi);
+            
+            LogMessage("Testing FTDI device connection...");
+            int result1 = ftdi_usb_open(&test_ftdi, 0x0403, 0x6010);
+            int result2 = ftdi_usb_open(&test_ftdi, 0x0403, 0x6014);
+            
+            if (result1 != 0 && result2 != 0) {
+                LogMessage("No FTDI device found (tried 0x6010 and 0x6014)");
+                LogMessage("Result1: %d, Result2: %d", result1, result2);
+                ftdi_deinit(&test_ftdi);
+                
+                MessageBoxA(hwnd_main, 
+                    "No FTDI device detected!\n\n"
+                    "Please connect an FTDI-based ice40 programmer:\n"
+                    "- iCEstick\n"
+                    "- iCE40-HX1K-EVB\n"
+                    "- Other FTDI-based ice40 boards\n\n"
+                    "Make sure device drivers are installed.", 
+                    "No FTDI Device Found", MB_OK | MB_ICONWARNING);
+                LogMessage("=== Test Connection Ended (No Device) ===");
+                return;
+            }
+            
+            // Close the test connection
+            ftdi_usb_close(&test_ftdi);
+            ftdi_deinit(&test_ftdi);
+            LogMessage("FTDI device detected, proceeding with mpsse_init...");
             
             // Use default parameters: interface 0, no device string, normal clock speed
             LogMessage("Calling mpsse_init(0, NULL, false)...");
-            mpsse_init(0, NULL, false);
-            LogMessage("mpsse_init completed successfully");
             
-            mpsse_initialized = true;
-            LogMessage("MPSSE initialized successfully");
+            __try {
+                mpsse_init(0, NULL, false);
+                LogMessage("mpsse_init completed successfully");
+                mpsse_initialized = true;
+                LogMessage("MPSSE initialized successfully");
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                LogMessage("EXCEPTION during mpsse_init!");
+                MessageBoxA(hwnd_main, 
+                    "Failed to initialize MPSSE interface!\n\n"
+                    "Check iceprog_debug.log for details.", 
+                    "MPSSE Initialization Failed", MB_OK | MB_ICONERROR);
+                LogMessage("=== Test Connection Ended (Failed) ===");
+                return;
+            }
             
             // Release reset and setup flash
             LogMessage("Calling flash_release_reset()...");
