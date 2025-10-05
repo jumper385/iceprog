@@ -10,6 +10,18 @@
 static bool mpsse_initialized = false;
 static char *selected_file_path = NULL;
 static GtkWidget *lbl_file_path = NULL;
+static GtkWidget *progress_bar = NULL;
+
+static void update_progress(double fraction, const char *text) {
+    if (progress_bar) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(progress_bar), fraction);
+        gtk_progress_bar_set_text(GTK_PROGRESS_BAR(progress_bar), text);
+        // Process pending GUI events to update the display
+        while (gtk_events_pending()) {
+            gtk_main_iteration();
+        }
+    }
+}
 
 static void cleanup_mpsse() {
     if (mpsse_initialized) {
@@ -101,13 +113,17 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
     // Check if a file is selected
     if (!selected_file_path) {
         printf("Error: No bitstream file selected!\n");
+        update_progress(0.0, "Error: No file selected");
         return;
     }
+    
+    update_progress(0.0, "Opening file...");
     
     // Open the selected file
     FILE *f = fopen(selected_file_path, "rb");
     if (f == NULL) {
         printf("Error: Cannot open file '%s' for reading\n", selected_file_path);
+        update_progress(0.0, "Error: Cannot open file");
         return;
     }
     
@@ -118,14 +134,17 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
     
     if (file_size <= 0) {
         printf("Error: Invalid file size\n");
+        update_progress(0.0, "Error: Invalid file size");
         fclose(f);
         return;
     }
     
     printf("File size: %ld bytes\n", file_size);
+    update_progress(0.05, "File loaded successfully");
     
     // Initialize MPSSE if not already done
     if (!mpsse_initialized) {
+        update_progress(0.1, "Initializing MPSSE interface...");
         printf("Initializing MPSSE interface...\n");
         mpsse_init(0, NULL, false);
         mpsse_initialized = true;
@@ -134,6 +153,7 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
     }
     
     // Reset and prepare flash
+    update_progress(0.15, "Preparing flash...");
     printf("Preparing flash...\n");
     flash_chip_deselect();
     usleep(250000);
@@ -142,6 +162,7 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
     flash_read_id();
     
     // Erase flash (using 64kB sectors)
+    update_progress(0.2, "Erasing flash...");
     printf("Erasing flash...\n");
     int erase_block_size = 64; // 64kB sectors
     int block_size = erase_block_size << 10; // Convert to bytes
@@ -149,14 +170,25 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
     int begin_addr = 0 & ~block_mask;
     int end_addr = (file_size + block_mask) & ~block_mask;
     
+    int total_erase_blocks = (end_addr - begin_addr) / block_size;
+    int current_erase_block = 0;
+    
     for (int addr = begin_addr; addr < end_addr; addr += block_size) {
+        double erase_progress = 0.2 + (0.3 * current_erase_block / total_erase_blocks);
+        char erase_text[100];
+        snprintf(erase_text, sizeof(erase_text), "Erasing sector %d/%d", 
+                current_erase_block + 1, total_erase_blocks);
+        update_progress(erase_progress, erase_text);
+        
         printf("Erasing sector at 0x%06X\n", addr);
         flash_write_enable();
         flash_64kB_sector_erase(addr);
         flash_wait();
+        current_erase_block++;
     }
     
     // Program flash
+    update_progress(0.5, "Programming flash...");
     printf("Programming flash...\n");
     for (int rc, addr = 0; true; addr += rc) {
         uint8_t buffer[256];
@@ -164,15 +196,20 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
         rc = fread(buffer, 1, page_size, f);
         if (rc <= 0)
             break;
-        printf("Programming addr 0x%06X (%ld%%)\r", addr, 100 * addr / file_size);
-        fflush(stdout);
+            
+        double prog_progress = 0.5 + (0.3 * addr / file_size);
+        char prog_text[100];
+        snprintf(prog_text, sizeof(prog_text), "Programming: %ld%% (0x%06X)", 
+                100 * addr / file_size, addr);
+        update_progress(prog_progress, prog_text);
+        
         flash_write_enable();
         flash_prog(addr, buffer, rc);
         flash_wait();
     }
-    printf("\nProgramming complete.\n");
     
     // Verify programming
+    update_progress(0.8, "Verifying flash...");
     printf("Verifying flash...\n");
     fseek(f, 0, SEEK_SET);
     bool verify_ok = true;
@@ -181,27 +218,37 @@ void on_btn_flash_chip(GtkButton *button, gpointer user_data) {
         int rc = fread(buffer_file, 1, 256, f);
         if (rc <= 0)
             break;
-        printf("Verifying addr 0x%06X (%ld%%)\r", addr, 100 * addr / file_size);
-        fflush(stdout);
+            
+        double verify_progress = 0.8 + (0.15 * addr / file_size);
+        char verify_text[100];
+        snprintf(verify_text, sizeof(verify_text), "Verifying: %ld%% (0x%06X)", 
+                100 * addr / file_size, addr);
+        update_progress(verify_progress, verify_text);
+        
         flash_read(addr, buffer_flash, rc);
         if (memcmp(buffer_file, buffer_flash, rc)) {
             printf("\nVerification failed at address 0x%06X!\n", addr);
+            update_progress(0.95, "Verification failed!");
             verify_ok = false;
             break;
         }
     }
     
-    if (verify_ok) {
-        printf("\nVERIFY OK\n");
-    }
-    
     // Power down flash
+    update_progress(0.95, "Finalizing...");
     flash_power_down();
     flash_release_reset();
     usleep(250000);
     
     fclose(f);
-    printf("Flash operation completed.\n");
+    
+    if (verify_ok) {
+        printf("\nVERIFY OK\n");
+        update_progress(1.0, "Flash completed successfully!");
+        printf("Flash operation completed.\n");
+    } else {
+        update_progress(0.0, "Flash failed - verification error");
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -209,7 +256,7 @@ int main(int argc, char *argv[]) {
 
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "IceProg GUI");
-    gtk_window_set_default_size(GTK_WINDOW(window), 300, 150);
+    gtk_window_set_default_size(GTK_WINDOW(window), 400, 200);
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), NULL);
 
     // Create a vertical box to hold multiple widgets
@@ -220,12 +267,6 @@ int main(int argc, char *argv[]) {
     GtkWidget *btn_test_connection = gtk_button_new_with_label("Test Probe Connection");
     g_signal_connect(btn_test_connection, "clicked", G_CALLBACK(on_btn_test_connection), NULL);
     gtk_box_pack_start(GTK_BOX(vbox), btn_test_connection, TRUE, TRUE, 0);
-
-    // Add debug button
-    GtkWidget *btn_debug = gtk_button_new_with_label("Debug Button");
-    g_signal_connect(btn_debug, "clicked", G_CALLBACK(on_clicked), NULL);
-    gtk_box_pack_start(GTK_BOX(vbox), btn_debug, TRUE, TRUE, 0);
-
     // Add bitstream file selection. file path selection dialog
     GtkWidget *btn_select_file = gtk_button_new_with_label("Select Bitstream File");
     g_signal_connect(btn_select_file, "clicked", G_CALLBACK(on_btn_select_file), NULL);
@@ -234,6 +275,12 @@ int main(int argc, char *argv[]) {
     // Selected file path display if present
     lbl_file_path = gtk_label_new("No file selected");
     gtk_box_pack_start(GTK_BOX(vbox), lbl_file_path, TRUE, TRUE, 0);
+
+    // Progress bar for flashing operations
+    progress_bar = gtk_progress_bar_new();
+    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(progress_bar), "Ready");
+    gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(progress_bar), TRUE);
+    gtk_box_pack_start(GTK_BOX(vbox), progress_bar, TRUE, TRUE, 0);
 
     // Flash the Chip
     GtkWidget *btn_flash_chip = gtk_button_new_with_label("Flash Chip");
