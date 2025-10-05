@@ -1,5 +1,7 @@
 #ifndef ICEPROG_FN_H
 #define ICEPROG_FN_H
+
+#include <stdbool.h>
 #include "mpsse.h"
 
 void set_cs_creset(int cs_b, int creset_b);
