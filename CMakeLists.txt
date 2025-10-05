@@ -9,9 +9,9 @@ if (WIN32 AND NOT USE_GTK)
     target_link_libraries(iceprog_gui PRIVATE user32)
 else()
   find_package(PkgConfig REQUIRED)
-  pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+  # IMPORTED_TARGET gives you an interface target with proper include + link dirs
+  pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
+
   add_executable(iceprog_gui gui.c)
-  target_include_directories(iceprog_gui PRIVATE ${GTK3_INCLUDE_DIRS})
-  target_compile_options(iceprog_gui PRIVATE ${GTK3_CFLAGS_OTHER})
-  target_link_libraries(iceprog_gui PRIVATE ${GTK3_LIBRARIES})
+  target_link_libraries(iceprog_gui PRIVATE PkgConfig::GTK3)
 endif()
