@@ -1,322 +1,408 @@
-#define UNICODE
-#define _UNICODE
 #include <windows.h>
+#include <commdlg.h>
+#include <commctrl.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <wchar.h>
+#include <string.h>
+#include <stdbool.h>
 
-// Control IDs
-#define BTN_BROWSE_ID       1001
-#define BTN_PROGRAM_ID      1002
-#define BTN_READ_ID         1003
-#define BTN_VERIFY_ID       1004
-#define BTN_TEST_ID         1005
-#define EDIT_FILEPATH_ID    1006
-#define STATIC_STATUS_ID    1007
-#define PROGRESS_ID         1008
+// include iceprog library
+#include "iceprog_fn.h"
+#include "mpsse.h"
+
+// Window controls IDs
+#define ID_BTN_TEST_CONNECTION  1001
+#define ID_BTN_SELECT_FILE      1002
+#define ID_BTN_FLASH_CHIP       1003
+#define ID_LBL_FILE_PATH        1004
+#define ID_PROGRESS_BAR         1005
 
 // Window dimensions
-#define WINDOW_WIDTH  600
-#define WINDOW_HEIGHT 400
+#define WINDOW_WIDTH    500
+#define WINDOW_HEIGHT   300
+#define BUTTON_WIDTH    200
+#define BUTTON_HEIGHT   30
+#define MARGIN          10
 
 // Global variables
-HWND g_hEdit;
-HWND g_hStatus;
-HWND g_hProgress;
-wchar_t g_selectedFile[MAX_PATH] = L"";
+static bool mpsse_initialized = false;
+static char selected_file_path[MAX_PATH] = {0};
+static HWND hwnd_main = NULL;
+static HWND hwnd_lbl_file_path = NULL;
+static HWND hwnd_progress_bar = NULL;
+static HWND hwnd_btn_test = NULL;
+static HWND hwnd_btn_select = NULL;
+static HWND hwnd_btn_flash = NULL;
 
-// Function declarations
-void BrowseForFile(HWND hwnd);
-void UpdateStatus(const wchar_t* message);
-void ProgramFile(HWND hwnd);
-void ReadFlash(HWND hwnd);
-void VerifyFile(HWND hwnd);
-void TestConnection(HWND hwnd);
+// Function prototypes
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+void CreateControls(HWND hwnd);
+void OnTestConnection(void);
+void OnSelectFile(HWND hwnd);
+void OnFlashChip(void);
+void UpdateProgress(int percent, const char *text);
+void CleanupMpsse(void);
 
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-
-    switch (msg)
-    {
-    case WM_CREATE:
-        {
-            HINSTANCE hInst = ((LPCREATESTRUCT)lParam)->hInstance;
-            
-            // File path label
-            CreateWindowExW(0, L"STATIC", L"File Path:",
-                WS_CHILD | WS_VISIBLE,
-                20, 20, 80, 20,
-                hwnd, NULL, hInst, NULL);
-            
-            // File path edit box
-            g_hEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                WS_CHILD | WS_VISIBLE,
-                20, 45, 400, 25,
-                hwnd, (HMENU)EDIT_FILEPATH_ID, hInst, NULL);
-            
-            // Browse button
-            CreateWindowExW(0, L"BUTTON", L"Browse...",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                430, 45, 80, 25,
-                hwnd, (HMENU)BTN_BROWSE_ID, hInst, NULL);
-            
-            // Operation buttons
-            CreateWindowExW(0, L"BUTTON", L"Program Flash",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                20, 90, 120, 35,
-                hwnd, (HMENU)BTN_PROGRAM_ID, hInst, NULL);
-            
-            CreateWindowExW(0, L"BUTTON", L"Read Flash",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                150, 90, 120, 35,
-                hwnd, (HMENU)BTN_READ_ID, hInst, NULL);
-            
-            CreateWindowExW(0, L"BUTTON", L"Verify",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                280, 90, 120, 35,
-                hwnd, (HMENU)BTN_VERIFY_ID, hInst, NULL);
-            
-            CreateWindowExW(0, L"BUTTON", L"Test Connection",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                410, 90, 120, 35,
-                hwnd, (HMENU)BTN_TEST_ID, hInst, NULL);
-            
-            // Status label
-            CreateWindowExW(0, L"STATIC", L"Status:",
-                WS_CHILD | WS_VISIBLE,
-                20, 145, 60, 20,
-                hwnd, NULL, hInst, NULL);
-            
-            // Status display
-            g_hStatus = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"Ready",
-                WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY | WS_VSCROLL,
-                20, 170, 510, 180,
-                hwnd, (HMENU)STATIC_STATUS_ID, hInst, NULL);
+static void update_progress(double fraction, const char *text) {
+    if (hwnd_progress_bar) {
+        int percent = (int)(fraction * 100);
+        SendMessage(hwnd_progress_bar, PBM_SETPOS, percent, 0);
+        SetWindowTextA(hwnd_progress_bar, text);
+        
+        // Process pending messages to update the display
+        MSG msg;
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
         }
-        return 0;
-
-    case WM_COMMAND:
-        switch (LOWORD(wParam))
-        {
-        case BTN_BROWSE_ID:
-            if (HIWORD(wParam) == BN_CLICKED)
-                BrowseForFile(hwnd);
-            break;
-            
-        case BTN_PROGRAM_ID:
-            if (HIWORD(wParam) == BN_CLICKED)
-                ProgramFile(hwnd);
-            break;
-            
-        case BTN_READ_ID:
-            if (HIWORD(wParam) == BN_CLICKED)
-                ReadFlash(hwnd);
-            break;
-            
-        case BTN_VERIFY_ID:
-            if (HIWORD(wParam) == BN_CLICKED)
-                VerifyFile(hwnd);
-            break;
-            
-        case BTN_TEST_ID:
-            if (HIWORD(wParam) == BN_CLICKED)
-                TestConnection(hwnd);
-            break;
-        }
-        return 0;
-
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-
-    default:
-        return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 }
 
-int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nShow)
-{
-    const wchar_t *CLASS_NAME = L"BasicWin32HelloBye";
+static void cleanup_mpsse() {
+    if (mpsse_initialized) {
+        printf("Cleaning up MPSSE interface...\n");
+        mpsse_close();
+        mpsse_initialized = false;
+    }
+    memset(selected_file_path, 0, sizeof(selected_file_path));
+}
 
-    WNDCLASSW wc = {0};
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInst;
+void OnTestConnection(void) {
+    printf("Testing SPI Flash connection...\n");
+    
+    // Initialize MPSSE if not already done
+    if (!mpsse_initialized) {
+        printf("Initializing MPSSE interface...\n");
+        
+        // Use default parameters: interface 0, no device string, normal clock speed
+        mpsse_init(0, NULL, false);
+        mpsse_initialized = true;
+        
+        printf("MPSSE initialized successfully\n");
+        
+        // Release reset and setup flash
+        flash_release_reset();
+        Sleep(100);  // Windows equivalent of usleep(100000)
+        
+        printf("Flash reset released\n");
+    }
+    
+    // Test the flash connection
+    printf("Reading flash ID...\n");
+    flash_reset();
+    flash_power_up();
+    flash_read_id();
+    flash_power_down();
+    printf("Flash test completed\n");
+    
+    MessageBoxA(hwnd_main, "Flash test completed successfully!", "Test Connection", MB_OK | MB_ICONINFORMATION);
+}
+
+void OnSelectFile(HWND hwnd) {
+    printf("Selecting bitstream file...\n");
+    
+    OPENFILENAMEA ofn;
+    char szFile[MAX_PATH] = {0};
+    
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Bitstream Files\0*.bin;*.bit\0All Files\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    
+    if (GetOpenFileNameA(&ofn)) {
+        strcpy_s(selected_file_path, sizeof(selected_file_path), szFile);
+        printf("Selected file: %s\n", selected_file_path);
+        
+        // Update the label to show the selected file
+        if (hwnd_lbl_file_path) {
+            SetWindowTextA(hwnd_lbl_file_path, selected_file_path);
+        }
+    }
+}
+
+void OnFlashChip(void) {
+    printf("Flashing the chip...\n");
+    
+    // Check if a file is selected
+    if (strlen(selected_file_path) == 0) {
+        printf("Error: No bitstream file selected!\n");
+        MessageBoxA(hwnd_main, "Please select a bitstream file first!", "Error", MB_OK | MB_ICONERROR);
+        update_progress(0.0, "Error: No file selected");
+        return;
+    }
+    
+    update_progress(0.0, "Opening file...");
+    
+    // Open the selected file
+    FILE *f = fopen(selected_file_path, "rb");
+    if (f == NULL) {
+        printf("Error: Cannot open file '%s' for reading\n", selected_file_path);
+        MessageBoxA(hwnd_main, "Cannot open the selected file!", "Error", MB_OK | MB_ICONERROR);
+        update_progress(0.0, "Error: Cannot open file");
+        return;
+    }
+    
+    // Get file size
+    fseek(f, 0L, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0L, SEEK_SET);
+    
+    if (file_size <= 0) {
+        printf("Error: Invalid file size\n");
+        MessageBoxA(hwnd_main, "Invalid file size!", "Error", MB_OK | MB_ICONERROR);
+        update_progress(0.0, "Error: Invalid file size");
+        fclose(f);
+        return;
+    }
+    
+    printf("File size: %ld bytes\n", file_size);
+    update_progress(0.05, "File loaded successfully");
+    
+    // Initialize MPSSE if not already done
+    if (!mpsse_initialized) {
+        update_progress(0.1, "Initializing MPSSE interface...");
+        printf("Initializing MPSSE interface...\n");
+        mpsse_init(0, NULL, false);
+        mpsse_initialized = true;
+        flash_release_reset();
+        Sleep(100);
+    }
+    
+    // Reset and prepare flash
+    update_progress(0.15, "Preparing flash...");
+    printf("Preparing flash...\n");
+    flash_chip_deselect();
+    Sleep(250);
+    flash_reset();
+    flash_power_up();
+    flash_read_id();
+    
+    // Erase flash (using 64kB sectors)
+    update_progress(0.2, "Erasing flash...");
+    printf("Erasing flash...\n");
+    int erase_block_size = 64; // 64kB sectors
+    int block_size = erase_block_size << 10; // Convert to bytes
+    int block_mask = block_size - 1;
+    int begin_addr = 0 & ~block_mask;
+    int end_addr = (file_size + block_mask) & ~block_mask;
+    
+    int total_erase_blocks = (end_addr - begin_addr) / block_size;
+    int current_erase_block = 0;
+    
+    for (int addr = begin_addr; addr < end_addr; addr += block_size) {
+        double erase_progress = 0.2 + (0.3 * current_erase_block / total_erase_blocks);
+        char erase_text[100];
+        snprintf(erase_text, sizeof(erase_text), "Erasing sector %d/%d", 
+                current_erase_block + 1, total_erase_blocks);
+        update_progress(erase_progress, erase_text);
+        
+        printf("Erasing sector at 0x%06X\n", addr);
+        flash_write_enable();
+        flash_64kB_sector_erase(addr);
+        flash_wait();
+        current_erase_block++;
+    }
+    
+    // Program flash
+    update_progress(0.5, "Programming flash...");
+    printf("Programming flash...\n");
+    for (int rc, addr = 0; true; addr += rc) {
+        uint8_t buffer[256];
+        int page_size = 256 - addr % 256;
+        rc = fread(buffer, 1, page_size, f);
+        if (rc <= 0)
+            break;
+            
+        double prog_progress = 0.5 + (0.3 * addr / file_size);
+        char prog_text[100];
+        snprintf(prog_text, sizeof(prog_text), "Programming: %ld%% (0x%06X)", 
+                100 * addr / file_size, addr);
+        update_progress(prog_progress, prog_text);
+        
+        flash_write_enable();
+        flash_prog(addr, buffer, rc);
+        flash_wait();
+    }
+    
+    // Verify programming
+    update_progress(0.8, "Verifying flash...");
+    printf("Verifying flash...\n");
+    fseek(f, 0, SEEK_SET);
+    bool verify_ok = true;
+    for (int addr = 0; true; addr += 256) {
+        uint8_t buffer_flash[256], buffer_file[256];
+        int rc = fread(buffer_file, 1, 256, f);
+        if (rc <= 0)
+            break;
+            
+        double verify_progress = 0.8 + (0.15 * addr / file_size);
+        char verify_text[100];
+        snprintf(verify_text, sizeof(verify_text), "Verifying: %ld%% (0x%06X)", 
+                100 * addr / file_size, addr);
+        update_progress(verify_progress, verify_text);
+        
+        flash_read(addr, buffer_flash, rc);
+        if (memcmp(buffer_file, buffer_flash, rc)) {
+            printf("\nVerification failed at address 0x%06X!\n", addr);
+            update_progress(0.95, "Verification failed!");
+            verify_ok = false;
+            break;
+        }
+    }
+    
+    // Power down flash
+    update_progress(0.95, "Finalizing...");
+    flash_power_down();
+    flash_release_reset();
+    Sleep(250);
+    
+    fclose(f);
+    
+    if (verify_ok) {
+        printf("\nVERIFY OK\n");
+        update_progress(1.0, "Flash completed successfully!");
+        printf("Flash operation completed.\n");
+        MessageBoxA(hwnd_main, "Flash operation completed successfully!", "Success", MB_OK | MB_ICONINFORMATION);
+    } else {
+        update_progress(0.0, "Flash failed - verification error");
+        MessageBoxA(hwnd_main, "Flash failed - verification error!", "Error", MB_OK | MB_ICONERROR);
+    }
+}
+
+void CreateControls(HWND hwnd) {
+    // Initialize common controls
+    INITCOMMONCONTROLSEX icc;
+    icc.dwSize = sizeof(icc);
+    icc.dwICC = ICC_PROGRESS_CLASS;
+    InitCommonControlsEx(&icc);
+    
+    int y_pos = MARGIN;
+    
+    // Test connection button
+    hwnd_btn_test = CreateWindow(
+        "BUTTON", "Test Probe Connection",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+        (WINDOW_WIDTH - BUTTON_WIDTH) / 2, y_pos,
+        BUTTON_WIDTH, BUTTON_HEIGHT,
+        hwnd, (HMENU)ID_BTN_TEST_CONNECTION, GetModuleHandle(NULL), NULL);
+    y_pos += BUTTON_HEIGHT + MARGIN;
+    
+    // Select file button
+    hwnd_btn_select = CreateWindow(
+        "BUTTON", "Select Bitstream File",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        (WINDOW_WIDTH - BUTTON_WIDTH) / 2, y_pos,
+        BUTTON_WIDTH, BUTTON_HEIGHT,
+        hwnd, (HMENU)ID_BTN_SELECT_FILE, GetModuleHandle(NULL), NULL);
+    y_pos += BUTTON_HEIGHT + MARGIN;
+    
+    // File path label
+    hwnd_lbl_file_path = CreateWindow(
+        "STATIC", "No file selected",
+        WS_VISIBLE | WS_CHILD | SS_CENTER,
+        MARGIN, y_pos,
+        WINDOW_WIDTH - 2 * MARGIN, 20,
+        hwnd, (HMENU)ID_LBL_FILE_PATH, GetModuleHandle(NULL), NULL);
+    y_pos += 25 + MARGIN;
+    
+    // Progress bar
+    hwnd_progress_bar = CreateWindow(
+        PROGRESS_CLASS, NULL,
+        WS_VISIBLE | WS_CHILD | PBS_SMOOTH,
+        MARGIN, y_pos,
+        WINDOW_WIDTH - 2 * MARGIN, 25,
+        hwnd, (HMENU)ID_PROGRESS_BAR, GetModuleHandle(NULL), NULL);
+    
+    // Set progress bar range
+    SendMessage(hwnd_progress_bar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+    SendMessage(hwnd_progress_bar, PBM_SETPOS, 0, 0);
+    y_pos += 30 + MARGIN;
+    
+    // Flash chip button
+    hwnd_btn_flash = CreateWindow(
+        "BUTTON", "Flash Chip",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+        (WINDOW_WIDTH - BUTTON_WIDTH) / 2, y_pos,
+        BUTTON_WIDTH, BUTTON_HEIGHT,
+        hwnd, (HMENU)ID_BTN_FLASH_CHIP, GetModuleHandle(NULL), NULL);
+}
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_CREATE:
+            CreateControls(hwnd);
+            return 0;
+            
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+                case ID_BTN_TEST_CONNECTION:
+                    OnTestConnection();
+                    break;
+                case ID_BTN_SELECT_FILE:
+                    OnSelectFile(hwnd);
+                    break;
+                case ID_BTN_FLASH_CHIP:
+                    OnFlashChip();
+                    break;
+            }
+            return 0;
+            
+        case WM_DESTROY:
+            cleanup_mpsse();
+            PostQuitMessage(0);
+            return 0;
+    }
+    
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    // Register the window class
+    const char CLASS_NAME[] = "IceProgGUI";
+    
+    WNDCLASS wc = {};
+    wc.lpfnWndProc = WindowProc;
+    wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-
-    if (!RegisterClassW(&wc))
-        return 1;
-
-    HWND hwnd = CreateWindowExW(
-        0, CLASS_NAME, L"Iceprog GUI",
-        WS_OVERLAPPEDWINDOW ^ WS_MAXIMIZEBOX ^ WS_THICKFRAME, // small fixed window
-        CW_USEDEFAULT, CW_USEDEFAULT, WINDOW_WIDTH, WINDOW_HEIGHT,
-        NULL, NULL, hInst, NULL);
-    if (!hwnd)
-        return 1;
-
-    ShowWindow(hwnd, nShow);
-    UpdateWindow(hwnd);
-
-    MSG msg;
-    while (GetMessageW(&msg, NULL, 0, 0))
-    {
+    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    
+    RegisterClass(&wc);
+    
+    // Create the window
+    hwnd_main = CreateWindowEx(
+        0,                              // Optional window styles
+        CLASS_NAME,                     // Window class
+        "IceProg GUI - Windows",        // Window text
+        WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, // Window style (fixed size)
+        CW_USEDEFAULT, CW_USEDEFAULT,   // Position
+        WINDOW_WIDTH, WINDOW_HEIGHT,    // Size
+        NULL,       // Parent window    
+        NULL,       // Menu
+        hInstance,  // Instance handle
+        NULL        // Additional application data
+    );
+    
+    if (hwnd_main == NULL) {
+        return 0;
+    }
+    
+    ShowWindow(hwnd_main, nCmdShow);
+    UpdateWindow(hwnd_main);
+    
+    // Run the message loop
+    MSG msg = {};
+    while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-    return (int)msg.wParam;
-}
-
-// Function implementations
-
-void BrowseForFile(HWND hwnd)
-{
-    // For now, just focus the edit control and show helpful message
-    SetFocus(g_hEdit);
-    UpdateStatus(L"Please enter the file path manually in the text box above (e.g., firmware.bin)");
-    MessageBoxW(hwnd, L"Please type or paste the file path into the text box above.\n\nExample: C:\\path\\to\\your\\firmware.bin", 
-               L"File Selection", MB_OK | MB_ICONINFORMATION);
-}
-
-void UpdateStatus(const wchar_t* message)
-{
-    if (g_hStatus)
-    {
-        // Get current text
-        int textLen = GetWindowTextLengthW(g_hStatus);
-        wchar_t* currentText = (wchar_t*)malloc((textLen + 1) * sizeof(wchar_t));
-        if (currentText)
-        {
-            GetWindowTextW(g_hStatus, currentText, textLen + 1);
-            
-            // Create new text with timestamp
-            wchar_t newText[2048];
-            SYSTEMTIME st;
-            GetLocalTime(&st);
-            
-            _snwprintf(newText, 2048, L"%s[%02d:%02d:%02d] %s\r\n", 
-                      currentText, st.wHour, st.wMinute, st.wSecond, message);
-            
-            SetWindowTextW(g_hStatus, newText);
-            
-            // Scroll to bottom
-            SendMessageW(g_hStatus, EM_SETSEL, -1, -1);
-            SendMessageW(g_hStatus, EM_SCROLLCARET, 0, 0);
-            
-            free(currentText);
-        }
-    }
-}
-
-void ProgramFile(HWND hwnd)
-{
-    // Get file path from edit control
-    GetWindowTextW(g_hEdit, g_selectedFile, MAX_PATH);
-    
-    if (wcslen(g_selectedFile) == 0)
-    {
-        MessageBoxW(hwnd, L"Please enter a file path first", L"Error", MB_OK | MB_ICONERROR);
-        return;
+        DispatchMessage(&msg);
     }
     
-    UpdateStatus(L"Starting flash programming...");
-    
-    // Convert Unicode to ANSI for system call
-    char filename[MAX_PATH];
-    WideCharToMultiByte(CP_ACP, 0, g_selectedFile, -1, filename, MAX_PATH, NULL, NULL);
-    
-    // Build command
-    char command[512];
-    snprintf(command, 512, "iceprog \"%s\"", filename);
-    
-    UpdateStatus(L"Executing iceprog command...");
-    
-    // Execute iceprog
-    int result = system(command);
-    
-    if (result == 0)
-    {
-        UpdateStatus(L"Programming completed successfully!");
-    }
-    else
-    {
-        UpdateStatus(L"Programming failed. Check connection and file.");
-    }
-}
-
-void ReadFlash(HWND hwnd)
-{
-    wchar_t szFile[MAX_PATH] = L"flash_dump.bin";
-    
-    // For simplicity, prompt user for output filename
-    if (MessageBoxW(hwnd, L"This will read the flash to 'flash_dump.bin' in the current directory.\n\nProceed?", 
-                   L"Read Flash", MB_YESNO | MB_ICONQUESTION) == IDYES)
-    {
-        UpdateStatus(L"Starting flash read...");
-        
-        // Execute iceprog read command
-        int result = system("iceprog -r flash_dump.bin");
-        
-        if (result == 0)
-        {
-            UpdateStatus(L"Flash read completed successfully! Saved to flash_dump.bin");
-        }
-        else
-        {
-            UpdateStatus(L"Flash read failed. Check connection.");
-        }
-    }
-}
-
-void VerifyFile(HWND hwnd)
-{
-    // Get file path from edit control
-    GetWindowTextW(g_hEdit, g_selectedFile, MAX_PATH);
-    
-    if (wcslen(g_selectedFile) == 0)
-    {
-        MessageBoxW(hwnd, L"Please enter a file path first", L"Error", MB_OK | MB_ICONERROR);
-        return;
-    }
-    
-    UpdateStatus(L"Starting verification...");
-    
-    // Convert Unicode to ANSI for system call
-    char filename[MAX_PATH];
-    WideCharToMultiByte(CP_ACP, 0, g_selectedFile, -1, filename, MAX_PATH, NULL, NULL);
-    
-    // Build command
-    char command[512];
-    snprintf(command, 512, "iceprog -c \"%s\"", filename);
-    
-    UpdateStatus(L"Executing iceprog verify command...");
-    
-    // Execute iceprog
-    int result = system(command);
-    
-    if (result == 0)
-    {
-        UpdateStatus(L"Verification completed successfully!");
-    }
-    else
-    {
-        UpdateStatus(L"Verification failed. Flash content doesn't match file.");
-    }
-}
-
-void TestConnection(HWND hwnd)
-{
-    UpdateStatus(L"Testing connection...");
-    
-    // Execute iceprog test command
-    int result = system("iceprog -t");
-    
-    if (result == 0)
-    {
-        UpdateStatus(L"Connection test successful! Device detected.");
-    }
-    else
-    {
-        UpdateStatus(L"Connection test failed. Check USB connection and drivers.");
-    }
+    return 0;
 }
