@@ -2,3 +2,4 @@ iceprog
 *.exe
 *.o
 *.d
+build/
